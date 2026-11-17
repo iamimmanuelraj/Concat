@@ -1318,6 +1318,8 @@ pub fn render_audio(
         error => error.to_string(),
     })
     .and_then(|()| {
+        // Cancellation can arrive while the encoder flushes its final packets.
+        reporter.cancelled()?;
         std::fs::rename(&mixed, &output)
             .map_err(|error| format!("could not write {}: {error}", output.display()))
     });

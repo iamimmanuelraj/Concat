@@ -2938,3 +2938,46 @@ fn the_sound_alone_refuses_silence_and_stops_when_cancelled() {
         .collect();
     assert!(left.is_empty(), "a cancelled export left {left:?}");
 }
+
+/// Cancellation at the end of the mix still preserves the previous export.
+#[test]
+fn the_sound_alone_can_be_cancelled_at_the_last_report() {
+    let scratch = Scratch::new("sound-cancelled-at-end");
+    let source = scratch.path().join("clock.wav");
+    clock_wav(&source, 2);
+    let mut studio = Studio::new(
+        scratch.path(),
+        "Cancel audio export",
+        video(WIDTH, HEIGHT, 30, 1),
+    );
+    let audio = studio.import(&source);
+    studio.apply(Command::AddClipAtFirstFree {
+        media_id: audio,
+        start: 0.0,
+    });
+
+    let output = scratch.path().join("mix.wav");
+    clock_wav(&output, 1);
+    let previous = std::fs::read(&output).expect("reads the previous export");
+    let spec = ExportSpec {
+        output: output.to_string_lossy().into_owned(),
+        ..ExportSpec::default()
+    };
+    let request = export::request(&studio.session, &spec, Vec::new());
+    let cancel = AtomicBool::new(false);
+    let result = export::run_audio(&request, None, &cancel, |progress| {
+        if progress.frame >= progress.total {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    assert_eq!(result, Err("export cancelled".to_owned()));
+    assert_eq!(
+        std::fs::read(&output).expect("keeps the previous export"),
+        previous
+    );
+    let leftovers = std::fs::read_dir(scratch.path())
+        .expect("reads export directory")
+        .map(|entry| entry.expect("reads directory entry").file_name())
+        .any(|name| name.to_string_lossy().contains(".concat-audio."));
+    assert!(!leftovers, "removes the unfinished export");
+}
